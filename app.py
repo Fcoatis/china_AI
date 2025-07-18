@@ -37,12 +37,10 @@ empresas = [
     "Baidu", "Alibaba", "Tencent", "SenseTime", "iFlytek",
     "SMIC", "Cambricon", "Estun Automation", "Siasun Robot", "Hygon"
 ]
-tickers = {
-    empresa: tick for empresa, tick in zip(empresas, [
-        "BIDU", "BABA", "0700.HK", "0020.HK", "002230.SZ",
-        "0981.HK", "688256.SS", "002747.SZ", "300024.SZ", "688041.SS"
-    ])
-}
+tickers = {empresa: tick for empresa, tick in zip(empresas, [
+    "BIDU", "BABA", "0700.HK", "0020.HK", "002230.SZ",
+    "0981.HK", "688256.SS", "002747.SZ", "300024.SZ", "688041.SS"
+])}
 pesos = dict(zip(empresas, [15, 15, 10, 8, 7, 12, 8, 10, 7, 8]))
 
 # --- Alocação otimizada via resíduos ---
@@ -116,15 +114,32 @@ col1.metric("Total Investido (USD)", f"${total_investido:,.2f}")
 col2.metric("Valor Atual (USD)",      f"${total_atual:,.2f}")
 col3.metric("Ganho/Perda Total",      f"${ganho_total:,.2f}", f"{variacao_total:.2f}%")
 
-# --- Tabela de Alocação ---
-df_display = df_alloc[[
+# --- Tabela de Alocação com Empresa como índice (pinned) ---
+df_display = df_alloc.set_index("Empresa")[[
     "Ticker", "Peso (%)", "Quantidade",
     "Preço Inicial (USD)", "Preço Atual (USD)",
     "Investimento Inicial (USD)", "Investimento Atual (USD)",
     "Ganho/Perda (USD)", "Variação (%)"
 ]]
+
+# Formatação para colunas USD e %
+format_dict = {
+    "Preço Inicial (USD)":        "{:,.2f}",
+    "Preço Atual (USD)":          "{:,.2f}",
+    "Investimento Inicial (USD)": "{:,.2f}",
+    "Investimento Atual (USD)":   "{:,.2f}",
+    "Ganho/Perda (USD)":          "{:,.2f}",
+    "Peso (%)":                   "{:.2f}",
+    "Variação (%)":               "{:.2f}%"
+}
+
 st.subheader("📋 Alocação Inteligente de Portfólio")
-st.dataframe(df_display.set_index("Ticker"))
+st.dataframe(
+    df_display
+      .style
+      .format(format_dict)
+      .set_properties(**{"text-align": "right"})
+)
 
 # --- Gráfico 1: Pizza da Alocação Inicial (ordenada, maior slice às 12h) ---
 df_plot = df_alloc.sort_values("Investimento Inicial (USD)", ascending=False)
@@ -133,15 +148,14 @@ ax1.pie(
     df_plot["Investimento Inicial (USD)"],
     labels=df_plot["Empresa"],
     autopct="%1.1f%%",
-    startangle=90,        # maior slice começa às 12h
-    counterclock=False    # sentido horário
+    startangle=90,
+    counterclock=False
 )
 ax1.axis("equal")
 st.subheader("🍰 Distribuição do Investimento Inicial")
 st.pyplot(fig1)
 
 # --- Gráfico 2: Evolução do Retorno (%) do Portfólio (ajustado) ---
-# 1) Construir DataFrame de preços diários em dias úteis com forward‑fill
 prices = {}
 for ticker in df_alloc["Ticker"]:
     hist = yf.Ticker(ticker).history(start=data_str, end=today_str)["Close"]
@@ -151,14 +165,11 @@ for ticker in df_alloc["Ticker"]:
 bd = pd.date_range(start=data_compra, end=date.today(), freq="B")
 prices_df = pd.DataFrame(prices).reindex(bd).ffill()
 
-# 2) Valor de mercado diário do portfólio
 quantidades = df_alloc.set_index("Ticker")["Quantidade"]
 port_val = (prices_df * quantidades).sum(axis=1)
 
-# 3) Retorno %
 port_ret = (port_val / total_investido - 1) * 100
 
-# 4) Plot
 fig2, ax2 = plt.subplots()
 ax2.plot(port_ret.index, port_ret.values, linewidth=2)
 ax2.set_title("Evolução do Retorno do Portfólio (%)")
