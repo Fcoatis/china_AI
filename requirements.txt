@@ -1,21 +1,5 @@
-# Ambiente Python
-python>=3.9,<3.12
-
-# Framework de interface web
 streamlit==1.26.1
-
-# Manipulação de dados
 pandas==2.3.3
 numpy==1.25.2
-
-# Coleta de cotações
 yfinance==0.2.79
-
-# Plotagem de gráficos
 matplotlib==3.8.4
-
-# Timezones e parsing de datas (útil para alinhar índices tz-aware/naive)
-python-dateutil>=2.8.2
-
-# Requisições HTTP (yfinance e futuras integrações)
-requests>=2.31.0
