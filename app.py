@@ -1,117 +1,172 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import os
+import yfinance as yf
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta, date
+import matplotlib.dates as mdates
+import os
+from datetime import date, timedelta
 
 # --- Interface ---
-st.title("💹 Simulador de Portfólio Temático: IA na China")
-valor_total = st.number_input("Valor total investido (USD)", min_value=1000, value=10000, step=500)
+st.title("💹 Simulador de Portfólio: IA na China")
+valor_total = st.number_input(
+    "Valor total disponível (USD)",
+    min_value=1000,
+    value=10000,
+    step=500,
+)
 
-# Selecionar a data da compra
-#data_compra = st.date_input("📅 Data da Compra (retroativa)", value=date.today() - timedelta(days=30), max_value=date.today() - timedelta(days=1))
-data_compra = st.date_input("📅 Data da Compra (retroativa)", value=date(2025, 7, 15), max_value=date.today() - timedelta(days=1))
+# --- Seleção de Data de Compra ---
+data_compra = st.date_input(
+    "📅 Data da Compra (retroativa)",
+    value=date(2025, 7, 15),
+    max_value=date.today() - timedelta(days=1)
+)
+data_str = data_compra.strftime("%Y-%m-%d")
+st.markdown(f"**Data de Compra:** {data_str}")
 
+# --- Leitura do CSV de Preços Iniciais ---
+arquivo_precos = f"precos_iniciais_{data_str}.csv"
+if os.path.exists(arquivo_precos):
+    df_precos_iniciais = pd.read_csv(arquivo_precos, index_col=0)
+else:
+    st.error(f"Arquivo não encontrado: {arquivo_precos}")
+    st.stop()
+
+# --- Definição de Ativos e Pesos ---
 empresas = [
     "Baidu", "Alibaba", "Tencent", "SenseTime", "iFlytek",
     "SMIC", "Cambricon", "Estun Automation", "Siasun Robot", "Hygon"
 ]
 tickers = {
-    "Baidu": "BIDU",
-    "Alibaba": "BABA",
-    "Tencent": "0700.HK",
-    "SenseTime": "0020.HK",
-    "iFlytek": "002230.SZ",
-    "SMIC": "0981.HK",
-    "Cambricon": "688256.SS",
-    "Estun Automation": "002747.SZ",
-    "Siasun Robot": "300024.SZ",
-    "Hygon": "688041.SS"
+    empresa: tick for empresa, tick in zip(empresas, [
+        "BIDU", "BABA", "0700.HK", "0020.HK", "002230.SZ",
+        "0981.HK", "688256.SS", "002747.SZ", "300024.SZ", "688041.SS"
+    ])
 }
-pesos = {
-    "Baidu": 15, "Alibaba": 15, "Tencent": 10, "SenseTime": 8, "iFlytek": 7,
-    "SMIC": 12, "Cambricon": 8, "Estun Automation": 10, "Siasun Robot": 7, "Hygon": 8
-}
+pesos = dict(zip(empresas, [15, 15, 10, 8, 7, 12, 8, 10, 7, 8]))
 
-# Arquivo com preços salvos com base na data
-data_str = data_compra.strftime("%Y-%m-%d")
-arquivo_precos = f"precos_iniciais_{data_str}.csv"
-if os.path.exists(arquivo_precos):
-    df_precos_iniciais = pd.read_csv(arquivo_precos, index_col=0)
-else:
-    df_precos_iniciais = pd.DataFrame(columns=["PrecoInicial"])
-
-dados = []
-
-# --- Coleta dados e simula ---
+# --- Alocação otimizada via resíduos ---
+dados_alloc = []
 for empresa in empresas:
-    ticker = tickers[empresa]
-    peso = pesos[empresa]
-    investimento = valor_total * peso / 100
+    ticker    = tickers[empresa]
+    peso      = pesos[empresa]
+    preco_ini = float(df_precos_iniciais.loc[ticker, "PrecoInicial"])
+    valor_desejado = valor_total * peso / 100
+    qtd_exata = valor_desejado / preco_ini
+    parte_int = int(qtd_exata)
+    residuo   = qtd_exata - parte_int
+    dados_alloc.append({
+        "Empresa": empresa,
+        "Ticker": ticker,
+        "Peso (%)": peso,
+        "Quantidade": parte_int,
+        "Preço Inicial (USD)": round(preco_ini, 2),
+        "Resíduo": residuo
+    })
 
-    # Buscar preço inicial da data escolhida
-    if ticker in df_precos_iniciais.index:
-        try:
-            preco_inicial = float(df_precos_iniciais.loc[ticker, "PrecoInicial"])
-        except:
-            preco_inicial = None
-    else:
-        try:
-            df_hist = yf.download(ticker, start=data_compra - timedelta(days=5), end=data_compra + timedelta(days=1))
-            if not df_hist.empty:
-                preco_inicial = float(df_hist["Close"].ffill().iloc[-1])
-                df_precos_iniciais.loc[ticker, "PrecoInicial"] = preco_inicial
-                df_precos_iniciais.to_csv(arquivo_precos)
-            else:
-                preco_inicial = None
-        except Exception:
-            preco_inicial = None
+df_alloc = pd.DataFrame(dados_alloc)
 
-    # Buscar preço atual
+# Ajuste do caixa remanescente
+caixa = valor_total - (df_alloc["Quantidade"] * df_alloc["Preço Inicial (USD)"]).sum()
+df_alloc = df_alloc.sort_values("Resíduo", ascending=False).reset_index(drop=True)
+for i in range(len(df_alloc)):
+    preco_compra = df_alloc.loc[i, "Preço Inicial (USD)"]
+    if caixa >= preco_compra:
+        df_alloc.loc[i, "Quantidade"] += 1
+        caixa -= preco_compra
+
+# --- Preço Atual via yfinance ---
+precos_atuais = {}
+today_str = date.today().strftime("%Y-%m-%d")
+for ticker in df_alloc["Ticker"]:
     try:
-        df_atual = yf.download(ticker, period="5d")
-        preco_atual = float(df_atual["Close"].dropna().iloc[-1]) if not df_atual.empty else None
-    except Exception:
-        preco_atual = None
+        hist = yf.Ticker(ticker).history(start=data_str, end=today_str)["Close"]
+        hist.index = hist.index.tz_localize(None)
+        precos_atuais[ticker] = hist.iloc[-1]
+    except:
+        precos_atuais[ticker] = None
 
-    # Cálculo final
-    if preco_inicial is not None and preco_atual is not None:
-        qtd = round(investimento / preco_inicial)
-        invest_atual = qtd * preco_atual
-        ganho = invest_atual - investimento
-        variacao_pct = (preco_atual - preco_inicial) / preco_inicial * 100
+df_alloc["Preço Atual (USD)"] = df_alloc["Ticker"].map(precos_atuais).round(2)
 
-        dados.append({
-            "Empresa": empresa,
-            "Ticker": ticker,
-            "Peso (%)": peso,
-            "Preço Inicial (USD)": round(preco_inicial, 2),
-            "Preço Atual (USD)": round(preco_atual, 2),
-            "Quantidade": qtd,
-            "Investimento Inicial (USD)": round(investimento, 2),
-            "Investimento Atual (USD)": round(invest_atual, 2),
-            "Ganho/Perda (USD)": round(ganho, 2),
-            "Variação (%)": round(variacao_pct, 2)
-        })
+# --- Investimentos inicial e atual ---
+df_alloc["Investimento Inicial (USD)"] = (
+    df_alloc["Quantidade"] * df_alloc["Preço Inicial (USD)"]
+).round(2)
+df_alloc["Investimento Atual (USD)"] = (
+    df_alloc["Quantidade"] * df_alloc["Preço Atual (USD)"]
+).round(2)
 
-# Exibição
-df = pd.DataFrame(dados)
+# --- Ganho/Perda e Variação ---
+df_alloc["Ganho/Perda (USD)"] = (
+    df_alloc["Investimento Atual (USD)"] - df_alloc["Investimento Inicial (USD)"]
+).round(2)
+df_alloc["Variação (%)"] = (
+    (df_alloc["Ganho/Perda (USD)"] / df_alloc["Investimento Inicial (USD)"]) * 100
+).round(2)
 
-st.subheader("📊 Tabela de Investimentos")
-st.dataframe(df.set_index("Empresa"))
-
-total_investido = df["Investimento Inicial (USD)"].sum()
-total_atual = df["Investimento Atual (USD)"].sum()
-ganho_total = total_atual - total_investido
-variacao_total = (ganho_total / total_investido) * 100
+# --- Totais e Métricas ---
+total_investido = df_alloc["Investimento Inicial (USD)"].sum()
+total_atual     = df_alloc["Investimento Atual (USD)"].sum()
+ganho_total     = total_atual - total_investido
+variacao_total  = (ganho_total / total_investido) * 100
 
 st.subheader("📈 Resumo do Portfólio")
-st.metric("Total Investido (USD)", f"${total_investido:,.2f}")
-st.metric("Valor Atual (USD)", f"${total_atual:,.2f}")
-st.metric("Ganho/Perda Total", f"${ganho_total:,.2f} ({variacao_total:.2f}%)")
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Investido (USD)", f"${total_investido:,.2f}")
+col2.metric("Valor Atual (USD)",      f"${total_atual:,.2f}")
+col3.metric("Ganho/Perda Total",      f"${ganho_total:,.2f}", f"{variacao_total:.2f}%")
 
-st.subheader("🧩 Distribuição por Empresa")
-fig, ax = plt.subplots(figsize=(6, 6))
-df.set_index("Empresa")["Investimento Atual (USD)"].plot.pie(autopct='%1.1f%%', ax=ax)
-st.pyplot(fig)
+# --- Tabela de Alocação ---
+df_display = df_alloc[[
+    "Ticker", "Peso (%)", "Quantidade",
+    "Preço Inicial (USD)", "Preço Atual (USD)",
+    "Investimento Inicial (USD)", "Investimento Atual (USD)",
+    "Ganho/Perda (USD)", "Variação (%)"
+]]
+st.subheader("📋 Alocação Inteligente de Portfólio")
+st.dataframe(df_display.set_index("Ticker"))
+
+# --- Gráfico 1: Pizza da Alocação Inicial (ordenada, maior slice às 12h) ---
+df_plot = df_alloc.sort_values("Investimento Inicial (USD)", ascending=False)
+fig1, ax1 = plt.subplots()
+ax1.pie(
+    df_plot["Investimento Inicial (USD)"],
+    labels=df_plot["Empresa"],
+    autopct="%1.1f%%",
+    startangle=90,        # maior slice começa às 12h
+    counterclock=False    # sentido horário
+)
+ax1.axis("equal")
+st.subheader("🍰 Distribuição do Investimento Inicial")
+st.pyplot(fig1)
+
+# --- Gráfico 2: Evolução do Retorno (%) do Portfólio (ajustado) ---
+# 1) Construir DataFrame de preços diários em dias úteis com forward‑fill
+prices = {}
+for ticker in df_alloc["Ticker"]:
+    hist = yf.Ticker(ticker).history(start=data_str, end=today_str)["Close"]
+    hist.index = hist.index.tz_localize(None)
+    prices[ticker] = hist
+
+bd = pd.date_range(start=data_compra, end=date.today(), freq="B")
+prices_df = pd.DataFrame(prices).reindex(bd).ffill()
+
+# 2) Valor de mercado diário do portfólio
+quantidades = df_alloc.set_index("Ticker")["Quantidade"]
+port_val = (prices_df * quantidades).sum(axis=1)
+
+# 3) Retorno %
+port_ret = (port_val / total_investido - 1) * 100
+
+# 4) Plot
+fig2, ax2 = plt.subplots()
+ax2.plot(port_ret.index, port_ret.values, linewidth=2)
+ax2.set_title("Evolução do Retorno do Portfólio (%)")
+ax2.set_xlabel("Data")
+ax2.set_ylabel("Retorno (%)")
+ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
+ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m"))
+fig2.autofmt_xdate()
+
+st.subheader("📈 Evolução do Retorno do Portfólio")
+st.pyplot(fig2)
