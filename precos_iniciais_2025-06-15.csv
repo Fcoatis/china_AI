@@ -1,0 +1,31 @@
+,Ticker,PrecoInicial
+BIDU,BIDU,"Ticker
+BIDU    86.0
+Name: 2025-06-13 00:00:00, dtype: float64"
+BABA,BABA,"Ticker
+BABA    112.870003
+Name: 2025-06-13 00:00:00, dtype: float64"
+0700.HK,0700.HK,"Ticker
+0700.HK    510.0
+Name: 2025-06-13 00:00:00, dtype: float64"
+0020.HK,0020.HK,"Ticker
+0020.HK    1.41
+Name: 2025-06-13 00:00:00, dtype: float64"
+002230.SZ,002230.SZ,"Ticker
+002230.SZ    47.75843
+Name: 2025-06-13 00:00:00, dtype: float64"
+0981.HK,0981.HK,"Ticker
+0981.HK    40.0
+Name: 2025-06-13 00:00:00, dtype: float64"
+688256.SS,688256.SS,"Ticker
+688256.SS    604.900024
+Name: 2025-06-13 00:00:00, dtype: float64"
+002747.SZ,002747.SZ,"Ticker
+002747.SZ    19.459999
+Name: 2025-06-13 00:00:00, dtype: float64"
+300024.SZ,300024.SZ,"Ticker
+300024.SZ    16.459999
+Name: 2025-06-13 00:00:00, dtype: float64"
+688041.SS,688041.SS,"Ticker
+688041.SS    137.059998
+Name: 2025-06-13 00:00:00, dtype: float64"

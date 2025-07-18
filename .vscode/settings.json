@@ -1,0 +1,11 @@
+{
+  "python.defaultInterpreterPath": "/home/fcoatis/miniforge3/envs/chinaAI_env/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.indexing": true,
+  "python.analysis.autoImportCompletions": true,
+  "python.linting.enabled": true,
+  "python.linting.pylintEnabled": true,
+  "python.analysis.extraPaths": [],
+  "python.languageServer": "Pylance"
+}
+
