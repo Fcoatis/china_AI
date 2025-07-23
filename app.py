@@ -21,7 +21,7 @@ data_compra = st.date_input(
     value=date(2025, 7, 15),
     max_value=date.today() - timedelta(days=1)
 )
-data_str = data_compra.strftime("%Y-%m-%d")
+data_str = data_compra.strftime("%d-m%-Y%")
 st.markdown(f"**Data de Compra:** {data_str}")
 
 # --- Leitura do CSV de Preços Iniciais ---
