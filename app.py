@@ -5,6 +5,30 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os
 from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
+
+# Calcula e formata o período entre duas datas em PT-BR,
+# omitindo zeros e ajustando singular/plural
+def formatar_periodo(dt_inicial, dt_final):
+    rd = relativedelta(dt_final, dt_inicial)
+    partes = []
+
+    if rd.years:
+        partes.append(f"{rd.years} ano" + ("s" if rd.years > 1 else ""))
+    if rd.months:
+        partes.append("1 mês" if rd.months == 1 else f"{rd.months} meses")
+    if rd.days:
+        partes.append(f"{rd.days} dia" + ("s" if rd.days > 1 else ""))
+
+    if not partes:
+        return "0 dia"  # pode trocar por "hoje" se preferir
+
+    if len(partes) == 1:
+        return partes[0]
+    if len(partes) == 2:
+        return " e ".join(partes)
+    return f"{partes[0]}, {partes[1]} e {partes[2]}"
+
 
 # --- Interface ---
 st.title("💹 Simulador de Portfólio: IA na China")
@@ -21,8 +45,15 @@ data_compra = st.date_input(
     value=date(2025, 7, 15),
     max_value=date.today() - timedelta(days=1)
 )
+
 data_str = data_compra.strftime("%Y-%m-%d")
-st.markdown(f"**Data de Compra:** {data_str}")
+periodo_str = formatar_periodo(data_compra, date.today())
+
+col_dc, col_per = st.columns(2)
+with col_dc:
+    st.markdown(f"**Data de Compra:** {data_str}")
+with col_per:
+    st.markdown(f"**Período:** {periodo_str}")
 
 # --- Leitura do CSV de Preços Iniciais ---
 arquivo_precos = f"precos_iniciais_{data_str}.csv"
