@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os
 from datetime import date, timedelta
+import plotly.express as px
+
 
 # --- Interface ---
 st.title("💹 Simulador de Portfólio: IA na China")
@@ -155,7 +157,7 @@ ax1.axis("equal")
 st.subheader("🍰 Distribuição do Investimento Inicial")
 st.pyplot(fig1)
 
-# --- Gráfico 2: Evolução do Retorno (%) do Portfólio (ajustado) ---
+# --- Gráfico 2: Evolução do Retorno (%) do Portfólio (interativo Plotly) ---
 prices = {}
 for ticker in df_alloc["Ticker"]:
     hist = yf.Ticker(ticker).history(start=data_str, end=today_str)["Close"]
@@ -167,17 +169,33 @@ prices_df = pd.DataFrame(prices).reindex(bd).ffill()
 
 quantidades = df_alloc.set_index("Ticker")["Quantidade"]
 port_val = (prices_df * quantidades).sum(axis=1)
+port_ret = (port_val / total_investido - 1) * 100  # Série de retorno (%)
 
-port_ret = (port_val / total_investido - 1) * 100
+# Prepara DataFrame para o Plotly
+df_ret = (
+    port_ret.rename("Retorno (%)")
+            .reset_index()
+            .rename(columns={"index": "Data"})
+)
 
-fig2, ax2 = plt.subplots()
-ax2.plot(port_ret.index, port_ret.values, linewidth=2)
-ax2.set_title("Evolução do Retorno do Portfólio (%)")
-ax2.set_xlabel("Data")
-ax2.set_ylabel("Retorno (%)")
-ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
-ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m"))
-fig2.autofmt_xdate()
+fig = px.line(
+    df_ret,
+    x="Data",
+    y="Retorno (%)",
+    title="Evolução do Retorno do Portfólio (%)",
+    markers=True,
+)
+
+# Formatação de tooltip e eixos
+fig.update_traces(
+    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Retorno: %{y:.2f}%<extra></extra>"
+)
+fig.update_layout(
+    xaxis_title="Data",
+    yaxis_title="Retorno (%)",
+    xaxis=dict(tickformat="%d/%m"),
+    hovermode="x unified"
+)
 
 st.subheader("📈 Evolução do Retorno do Portfólio")
-st.pyplot(fig2)
+st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
