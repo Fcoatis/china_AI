@@ -1,15 +1,97 @@
+import os
+import re
+from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
+
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+
+# Matplotlib (pizza)
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import os
-from datetime import date, timedelta
+
+# Plotly (linha interativa)
 import plotly.express as px
 
-
-# --- Interface ---
+# ------------------ Config da página ------------------ #
+st.set_page_config(page_title="Simulador de Portfólio: IA na China", layout="centered")
 st.title("💹 Simulador de Portfólio: IA na China")
+
+# ------------------ Utilidades ------------------ #
+def formatar_periodo(dt_inicial, dt_final):
+    """
+    Diferença entre dt_inicial e dt_final em anos/meses/dias,
+    em PT-BR, omitindo zeros e com singular/plural corretos.
+    """
+    rd = relativedelta(dt_final, dt_inicial)
+    partes = []
+    if rd.years:
+        partes.append(f"{rd.years} ano" + ("s" if rd.years > 1 else ""))
+    if rd.months:
+        partes.append("1 mês" if rd.months == 1 else f"{rd.months} meses")
+    if rd.days:
+        partes.append(f"{rd.days} dia" + ("s" if rd.days > 1 else ""))
+
+    if not partes:
+        return "0 dia"  # ou "hoje"
+    if len(partes) == 1:
+        return partes[0]
+    if len(partes) == 2:
+        return " e ".join(partes)
+    return f"{partes[0]}, {partes[1]} e {partes[2]}"
+
+def _hex_to_rgb(hexstr: str):
+    h = hexstr.lstrip("#")
+    if len(h) != 6:
+        return None
+    try:
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+    except Exception:
+        return None
+
+def _luma(rgb):
+    r, g, b = rgb
+    return 0.2126*r + 0.7152*g + 0.0722*b  # luminância perceptual
+
+def _theme_is_dark(force: bool | None = None) -> bool:
+    """
+    Detecta modo escuro com múltiplos fallbacks:
+    1) theme.base, se existir.
+    2) theme.backgroundColor (luma baixa => escuro).
+    3) theme.textColor (texto muito claro => fundo escuro).
+    4) fallback: claro.
+    Se 'force' vier (True/False), usa o valor forçado.
+    """
+    if force is not None:
+        return force
+
+    base = st.get_option("theme.base")
+    if isinstance(base, str):
+        return base.lower() == "dark"
+
+    bg = st.get_option("theme.backgroundColor")
+    if isinstance(bg, str):
+        rgb = _hex_to_rgb(bg)
+        if rgb:
+            return _luma(rgb) < 128  # fundo escuro => luma baixa
+
+    txt = st.get_option("theme.textColor")
+    if isinstance(txt, str):
+        rgb = _hex_to_rgb(txt)
+        if rgb:
+            return _luma(rgb) > 200  # texto muito claro => fundo escuro
+
+    return False
+
+# ------------------ Sidebar (override manual) ------------------ #
+force_dark_toggle = st.sidebar.toggle(
+    "Forçar labels brancos no gráfico",
+    value=False,
+    help="Use se as labels da pizza não ficarem legíveis no modo escuro."
+)
+
+# ------------------ Inputs ------------------ #
 valor_total = st.number_input(
     "Valor total disponível (USD)",
     min_value=1000,
@@ -24,7 +106,13 @@ data_compra = st.date_input(
     max_value=date.today() - timedelta(days=1)
 )
 data_str = data_compra.strftime("%Y-%m-%d")
-st.markdown(f"**Data de Compra:** {data_str}")
+periodo_str = formatar_periodo(data_compra, date.today())
+
+col_dc, col_per = st.columns(2)
+with col_dc:
+    st.markdown(f"**Data de Compra:** {data_str}")
+with col_per:
+    st.markdown(f"**Período:** {periodo_str}")
 
 # --- Leitura do CSV de Preços Iniciais ---
 arquivo_precos = f"precos_iniciais_{data_str}.csv"
@@ -83,7 +171,7 @@ for ticker in df_alloc["Ticker"]:
         hist = yf.Ticker(ticker).history(start=data_str, end=today_str)["Close"]
         hist.index = hist.index.tz_localize(None)
         precos_atuais[ticker] = hist.iloc[-1]
-    except:
+    except Exception:
         precos_atuais[ticker] = None
 
 df_alloc["Preço Atual (USD)"] = df_alloc["Ticker"].map(precos_atuais).round(2)
@@ -116,15 +204,13 @@ col1.metric("Total Investido (USD)", f"${total_investido:,.2f}")
 col2.metric("Valor Atual (USD)",      f"${total_atual:,.2f}")
 col3.metric("Ganho/Perda Total",      f"${ganho_total:,.2f}", f"{variacao_total:.2f}%")
 
-# --- Tabela de Alocação com Empresa como índice (pinned) ---
+# --- Tabela de Alocação (Empresa como índice) ---
 df_display = df_alloc.set_index("Empresa")[[
     "Ticker", "Peso (%)", "Quantidade",
     "Preço Inicial (USD)", "Preço Atual (USD)",
     "Investimento Inicial (USD)", "Investimento Atual (USD)",
     "Ganho/Perda (USD)", "Variação (%)"
 ]]
-
-# Formatação para colunas USD e %
 format_dict = {
     "Preço Inicial (USD)":        "{:,.2f}",
     "Preço Atual (USD)":          "{:,.2f}",
@@ -134,7 +220,6 @@ format_dict = {
     "Peso (%)":                   "{:.2f}",
     "Variação (%)":               "{:.2f}%"
 }
-
 st.subheader("📋 Alocação Inteligente de Portfólio")
 st.dataframe(
     df_display
@@ -143,54 +228,81 @@ st.dataframe(
       .set_properties(**{"text-align": "right"})
 )
 
-# --- Gráfico 1: Pizza da Alocação Inicial (ordenada, maior slice às 12h) ---
+# ------------------ Gráfico 1: Pizza ------------------ #
+# Detecta tema (com override manual do sidebar)
+is_dark  = _theme_is_dark(force=True if force_dark_toggle else None)
+txt_col  = "white" if is_dark else "black"
+edge_col = "white" if is_dark else "black"
+
+# ordena para manter maior fatia “às 12h”
 df_plot = df_alloc.sort_values("Investimento Inicial (USD)", ascending=False)
-fig1, ax1 = plt.subplots()
-ax1.pie(
+
+# fundo transparente
+plt.rcParams["savefig.transparent"] = True
+fig1, ax1 = plt.subplots(facecolor="none")
+ax1.set_facecolor("none")
+
+wedges, texts, autotexts = ax1.pie(
     df_plot["Investimento Inicial (USD)"],
     labels=df_plot["Empresa"],
     autopct="%1.1f%%",
     startangle=90,
-    counterclock=False
+    counterclock=False,
+    wedgeprops={"edgecolor": edge_col, "linewidth": 1.0}
 )
-ax1.axis("equal")
-st.subheader("🍰 Distribuição do Investimento Inicial")
-st.pyplot(fig1)
 
-# --- Gráfico 2: Evolução do Retorno (%) do Portfólio (interativo Plotly) ---
+# Força cor/tamanho das labels (nomes) e percentuais
+for t in texts:
+    t.set_color(txt_col)
+    t.set_fontsize(11)
+for t in autotexts:
+    t.set_color(txt_col)
+    t.set_fontsize(11)
+
+ax1.axis("equal")
+
+st.subheader("🍰 Distribuição do Investimento Inicial")
+st.pyplot(fig1, transparent=True)
+
+# ------------------ Gráfico 2: Linha (Plotly) ------------------ #
+# Série histórica do portfólio
 prices = {}
 for ticker in df_alloc["Ticker"]:
     hist = yf.Ticker(ticker).history(start=data_str, end=today_str)["Close"]
     hist.index = hist.index.tz_localize(None)
     prices[ticker] = hist
 
+# Apenas dias úteis
 bd = pd.date_range(start=data_compra, end=date.today(), freq="B")
 prices_df = pd.DataFrame(prices).reindex(bd).ffill()
 
 quantidades = df_alloc.set_index("Ticker")["Quantidade"]
 port_val = (prices_df * quantidades).sum(axis=1)
-port_ret = (port_val / total_investido - 1) * 100  # Série de retorno (%)
+port_ret = (port_val / total_investido - 1) * 100
 
-# Prepara DataFrame para o Plotly
 df_ret = (
     port_ret.rename("Retorno (%)")
             .reset_index()
             .rename(columns={"index": "Data"})
 )
+# período por ponto (da data de compra até cada data)
+df_ret["Período"] = df_ret["Data"].dt.date.map(lambda d: formatar_periodo(data_compra, d))
 
-fig = px.line(
+fig2 = px.line(
     df_ret,
     x="Data",
     y="Retorno (%)",
     title="Evolução do Retorno do Portfólio (%)",
     markers=True,
 )
-
-# Formatação de tooltip e eixos
-fig.update_traces(
-    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Retorno: %{y:.2f}%<extra></extra>"
+fig2.update_traces(
+    customdata=df_ret["Período"],
+    hovertemplate="<b>%{x|%d/%m/%Y}</b>"
+                  "<br>Retorno: %{y:.2f}%%"
+                  "<br>Período: %{customdata}"
+                  "<extra></extra>"
 )
-fig.update_layout(
+fig2.update_layout(
     xaxis_title="Data",
     yaxis_title="Retorno (%)",
     xaxis=dict(tickformat="%d/%m"),
@@ -198,4 +310,4 @@ fig.update_layout(
 )
 
 st.subheader("📈 Evolução do Retorno do Portfólio")
-st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": True})
