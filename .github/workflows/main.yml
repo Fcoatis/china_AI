@@ -1,0 +1,16 @@
+name: Acessar Streamlit de segunda a sexta às 12h e 23h
+
+on:
+  schedule:
+    - cron: '0 15 * * 1-5'  # 12h BRT (15h UTC)
+    - cron: '0 2 * * 1-5'   # 23h BRT (2h UTC)
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping no app Streamlit
+        run: |
+          echo "Acessando o app Streamlit..."
+          curl -s -o /dev/null -w "%{http_code}\n" https://chinaai-8jb2dzwbqelt36ggewiuv7.streamlit.app/
