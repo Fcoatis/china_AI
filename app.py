@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 
@@ -119,11 +119,13 @@ with col_per:
 
 # --- Leitura do CSV de Preços Iniciais ---
 arquivo_precos = f"precos_iniciais_{data_str}.csv"
-if os.path.exists(arquivo_precos):
+if Path(arquivo_precos).exists():
     df_precos_iniciais = pd.read_csv(arquivo_precos, index_col=0)
 else:
     st.error(f"Arquivo não encontrado: {arquivo_precos}")
     st.stop()
+
+
 
 # --- Definição de Ativos e Pesos ---
 empresas = [

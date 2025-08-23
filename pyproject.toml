@@ -12,3 +12,6 @@ dependencies = [
     "streamlit>=1.48.1",
     "yfinance>=0.2.65",
 ]
+
+[tool.ruff]
+lint.extend-select = ["PTH"]
