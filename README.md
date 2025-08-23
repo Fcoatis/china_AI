@@ -29,21 +29,21 @@ Este projeto utiliza [Streamlit](https://streamlit.io/) para simular o desempenh
 
 ### ▶️ Passo a passo
 
-1. **Valor Investido**  
+1. **Valor Investido**
    Escolha o valor total disponível em dólares (mínimo de $1.000).
 
-2. **Data da Compra**  
-   Por padrão, o simulador assume a data retroativa de **15/07/2025**.  
+2. **Data da Compra**
+   Por padrão, o simulador assume a data retroativa de **15/07/2025**.
    Você pode ajustar a data para qualquer outro dia **anterior ao dia atual**.
 
-3. **Cálculo da Alocação**  
+3. **Cálculo da Alocação**
    Com base nos pesos e nos preços históricos da data escolhida, o simulador determina:
    - Quantidade de ações compradas por empresa
    - Investimento inicial
    - Valor atual
    - Ganho/perda e variação percentual
 
-4. **Visualização**  
+4. **Visualização**
    O simulador apresenta:
    - 📊 **Tabela de Alocação Inteligente**
    - 📈 **Resumo do Portfólio**
@@ -62,3 +62,20 @@ Este projeto utiliza [Streamlit](https://streamlit.io/) para simular o desempenh
 ---
 
 ✨ Esperamos que este simulador ajude você a explorar cenários de investimento em IA na China com uma abordagem prática e visual!
+
+
+```
+china_AI
+├─ .python-version
+├─ README.md
+├─ app.py
+├─ precos_iniciais_2025-06-02.csv
+├─ precos_iniciais_2025-06-13.csv
+├─ precos_iniciais_2025-06-15.csv
+├─ precos_iniciais_2025-06-16.csv
+├─ precos_iniciais_2025-07-01.csv
+├─ precos_iniciais_2025-07-15.csv
+├─ pyproject.toml
+├─ requirements.txt
+└─ uv.lock
+```
