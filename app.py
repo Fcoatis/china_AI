@@ -1,5 +1,4 @@
 import os
-import re
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 
@@ -9,7 +8,6 @@ import yfinance as yf
 
 # Matplotlib (pizza)
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
 # Plotly (linha interativa)
 import plotly.express as px
@@ -17,6 +15,7 @@ import plotly.express as px
 # ------------------ Config da página ------------------ #
 st.set_page_config(page_title="Simulador de Portfólio: IA na China", layout="centered")
 st.title("💹 Simulador de Portfólio: IA na China")
+
 
 # ------------------ Utilidades ------------------ #
 def formatar_periodo(dt_inicial, dt_final):
@@ -41,18 +40,21 @@ def formatar_periodo(dt_inicial, dt_final):
         return " e ".join(partes)
     return f"{partes[0]}, {partes[1]} e {partes[2]}"
 
+
 def _hex_to_rgb(hexstr: str):
     h = hexstr.lstrip("#")
     if len(h) != 6:
         return None
     try:
-        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+        return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
     except Exception:
         return None
 
+
 def _luma(rgb):
     r, g, b = rgb
-    return 0.2126*r + 0.7152*g + 0.0722*b  # luminância perceptual
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b  # luminância perceptual
+
 
 def _theme_is_dark(force: bool | None = None) -> bool:
     """
@@ -84,11 +86,12 @@ def _theme_is_dark(force: bool | None = None) -> bool:
 
     return False
 
+
 # ------------------ Sidebar (override manual) ------------------ #
 force_dark_toggle = st.sidebar.toggle(
     "Forçar labels brancos no gráfico",
     value=False,
-    help="Use se as labels da pizza não ficarem legíveis no modo escuro."
+    help="Use se as labels da pizza não ficarem legíveis no modo escuro.",
 )
 
 # ------------------ Inputs ------------------ #
@@ -103,7 +106,7 @@ valor_total = st.number_input(
 data_compra = st.date_input(
     "📅 Data da Compra (retroativa)",
     value=date(2025, 7, 15),
-    max_value=date.today() - timedelta(days=1)
+    max_value=date.today() - timedelta(days=1),
 )
 data_str = data_compra.strftime("%Y-%m-%d")
 periodo_str = formatar_periodo(data_compra, date.today())
@@ -124,33 +127,57 @@ else:
 
 # --- Definição de Ativos e Pesos ---
 empresas = [
-    "Baidu", "Alibaba", "Tencent", "SenseTime", "iFlytek",
-    "SMIC", "Cambricon", "Estun Automation", "Siasun Robot", "Hygon"
+    "Baidu",
+    "Alibaba",
+    "Tencent",
+    "SenseTime",
+    "iFlytek",
+    "SMIC",
+    "Cambricon",
+    "Estun Automation",
+    "Siasun Robot",
+    "Hygon",
 ]
-tickers = {empresa: tick for empresa, tick in zip(empresas, [
-    "BIDU", "BABA", "0700.HK", "0020.HK", "002230.SZ",
-    "0981.HK", "688256.SS", "002747.SZ", "300024.SZ", "688041.SS"
-])}
+tickers = {
+    empresa: tick
+    for empresa, tick in zip(
+        empresas,
+        [
+            "BIDU",
+            "BABA",
+            "0700.HK",
+            "0020.HK",
+            "002230.SZ",
+            "0981.HK",
+            "688256.SS",
+            "002747.SZ",
+            "300024.SZ",
+            "688041.SS",
+        ],
+    )
+}
 pesos = dict(zip(empresas, [15, 15, 10, 8, 7, 12, 8, 10, 7, 8]))
 
 # --- Alocação otimizada via resíduos ---
 dados_alloc = []
 for empresa in empresas:
-    ticker    = tickers[empresa]
-    peso      = pesos[empresa]
+    ticker = tickers[empresa]
+    peso = pesos[empresa]
     preco_ini = float(df_precos_iniciais.loc[ticker, "PrecoInicial"])
     valor_desejado = valor_total * peso / 100
     qtd_exata = valor_desejado / preco_ini
     parte_int = int(qtd_exata)
-    residuo   = qtd_exata - parte_int
-    dados_alloc.append({
-        "Empresa": empresa,
-        "Ticker": ticker,
-        "Peso (%)": peso,
-        "Quantidade": parte_int,
-        "Preço Inicial (USD)": round(preco_ini, 2),
-        "Resíduo": residuo
-    })
+    residuo = qtd_exata - parte_int
+    dados_alloc.append(
+        {
+            "Empresa": empresa,
+            "Ticker": ticker,
+            "Peso (%)": peso,
+            "Quantidade": parte_int,
+            "Preço Inicial (USD)": round(preco_ini, 2),
+            "Resíduo": residuo,
+        }
+    )
 
 df_alloc = pd.DataFrame(dados_alloc)
 
@@ -194,44 +221,48 @@ df_alloc["Variação (%)"] = (
 
 # --- Totais e Métricas ---
 total_investido = df_alloc["Investimento Inicial (USD)"].sum()
-total_atual     = df_alloc["Investimento Atual (USD)"].sum()
-ganho_total     = total_atual - total_investido
-variacao_total  = (ganho_total / total_investido) * 100
+total_atual = df_alloc["Investimento Atual (USD)"].sum()
+ganho_total = total_atual - total_investido
+variacao_total = (ganho_total / total_investido) * 100
 
 st.subheader("📈 Resumo do Portfólio")
 col1, col2, col3 = st.columns(3)
 col1.metric("Total Investido (USD)", f"${total_investido:,.2f}")
-col2.metric("Valor Atual (USD)",      f"${total_atual:,.2f}")
-col3.metric("Ganho/Perda Total",      f"${ganho_total:,.2f}", f"{variacao_total:.2f}%")
+col2.metric("Valor Atual (USD)", f"${total_atual:,.2f}")
+col3.metric("Ganho/Perda Total", f"${ganho_total:,.2f}", f"{variacao_total:.2f}%")
 
 # --- Tabela de Alocação (Empresa como índice) ---
-df_display = df_alloc.set_index("Empresa")[[
-    "Ticker", "Peso (%)", "Quantidade",
-    "Preço Inicial (USD)", "Preço Atual (USD)",
-    "Investimento Inicial (USD)", "Investimento Atual (USD)",
-    "Ganho/Perda (USD)", "Variação (%)"
-]]
+df_display = df_alloc.set_index("Empresa")[
+    [
+        "Ticker",
+        "Peso (%)",
+        "Quantidade",
+        "Preço Inicial (USD)",
+        "Preço Atual (USD)",
+        "Investimento Inicial (USD)",
+        "Investimento Atual (USD)",
+        "Ganho/Perda (USD)",
+        "Variação (%)",
+    ]
+]
 format_dict = {
-    "Preço Inicial (USD)":        "{:,.2f}",
-    "Preço Atual (USD)":          "{:,.2f}",
+    "Preço Inicial (USD)": "{:,.2f}",
+    "Preço Atual (USD)": "{:,.2f}",
     "Investimento Inicial (USD)": "{:,.2f}",
-    "Investimento Atual (USD)":   "{:,.2f}",
-    "Ganho/Perda (USD)":          "{:,.2f}",
-    "Peso (%)":                   "{:.2f}",
-    "Variação (%)":               "{:.2f}%"
+    "Investimento Atual (USD)": "{:,.2f}",
+    "Ganho/Perda (USD)": "{:,.2f}",
+    "Peso (%)": "{:.2f}",
+    "Variação (%)": "{:.2f}%",
 }
 st.subheader("📋 Alocação Inteligente de Portfólio")
 st.dataframe(
-    df_display
-      .style
-      .format(format_dict)
-      .set_properties(**{"text-align": "right"})
+    df_display.style.format(format_dict).set_properties(**{"text-align": "right"})
 )
 
 # ------------------ Gráfico 1: Pizza ------------------ #
 # Detecta tema (com override manual do sidebar)
-is_dark  = _theme_is_dark(force=True if force_dark_toggle else None)
-txt_col  = "white" if is_dark else "black"
+is_dark = _theme_is_dark(force=True if force_dark_toggle else None)
+txt_col = "white" if is_dark else "black"
 edge_col = "white" if is_dark else "black"
 
 # ordena para manter maior fatia “às 12h”
@@ -248,7 +279,7 @@ wedges, texts, autotexts = ax1.pie(
     autopct="%1.1f%%",
     startangle=90,
     counterclock=False,
-    wedgeprops={"edgecolor": edge_col, "linewidth": 1.0}
+    wedgeprops={"edgecolor": edge_col, "linewidth": 1.0},
 )
 
 # Força cor/tamanho das labels (nomes) e percentuais
@@ -280,13 +311,11 @@ quantidades = df_alloc.set_index("Ticker")["Quantidade"]
 port_val = (prices_df * quantidades).sum(axis=1)
 port_ret = (port_val / total_investido - 1) * 100
 
-df_ret = (
-    port_ret.rename("Retorno (%)")
-            .reset_index()
-            .rename(columns={"index": "Data"})
-)
+df_ret = port_ret.rename("Retorno (%)").reset_index().rename(columns={"index": "Data"})
 # período por ponto (da data de compra até cada data)
-df_ret["Período"] = df_ret["Data"].dt.date.map(lambda d: formatar_periodo(data_compra, d))
+df_ret["Período"] = df_ret["Data"].dt.date.map(
+    lambda d: formatar_periodo(data_compra, d)
+)
 
 fig2 = px.line(
     df_ret,
@@ -298,15 +327,15 @@ fig2 = px.line(
 fig2.update_traces(
     customdata=df_ret["Período"],
     hovertemplate="<b>%{x|%d/%m/%Y}</b>"
-                  "<br>Retorno: %{y:.2f}%%"
-                  "<br>Período: %{customdata}"
-                  "<extra></extra>"
+    "<br>Retorno: %{y:.2f}%%"
+    "<br>Período: %{customdata}"
+    "<extra></extra>",
 )
 fig2.update_layout(
     xaxis_title="Data",
     yaxis_title="Retorno (%)",
     xaxis=dict(tickformat="%d/%m"),
-    hovermode="x unified"
+    hovermode="x unified",
 )
 
 st.subheader("📈 Evolução do Retorno do Portfólio")
