@@ -117,15 +117,46 @@ with col_dc:
 with col_per:
     st.markdown(f"**Período:** {periodo_str}")
 
-# --- Leitura do CSV de Preços Iniciais ---
+# --- Leitura ou Download dos Preços Iniciais ---
 arquivo_precos = f"precos_iniciais_{data_str}.csv"
 if Path(arquivo_precos).exists():
     df_precos_iniciais = pd.read_csv(arquivo_precos, index_col=0)
 else:
-    st.error(f"Arquivo não encontrado: {arquivo_precos}")
-    st.stop()
+    # --- Definição de Ativos e Pesos (necessário para obter tickers) ---
+    empresas_temp = [
+        "Baidu", "Alibaba", "Tencent", "SenseTime", "iFlytek", "SMIC",
+        "Cambricon", "Estun Automation", "Siasun Robot", "Hygon",
+    ]
+    tickers_temp = [
+        "BIDU", "BABA", "0700.HK", "0020.HK", "002230.SZ", "0981.HK",
+        "688256.SS", "002747.SZ", "300024.SZ", "688041.SS",
+    ]
 
+    with st.spinner(f"Baixando dados de preços para {data_str}..."):
+        try:
+            # Baixa dados para um período de 7 dias para garantir que um dia útil seja encontrado
+            end_date_fetch = data_compra + timedelta(days=7)
+            dados = yf.download(
+                tickers_temp,
+                start=data_compra,
+                end=end_date_fetch,
+                progress=False,
+                auto_adjust=False  # Garante que a coluna 'Close' seja usada
+            )
 
+            if dados.empty:
+                st.error(f"Não foi possível obter dados de preços para a data {data_str}. Tente uma data diferente.")
+                st.stop()
+
+            # Pega o preço de fechamento ('Close') do primeiro dia de negociação disponível
+            precos_iniciais = dados['Close'].bfill().iloc[0]
+
+            df_precos_iniciais = precos_iniciais.to_frame(name="PrecoInicial")
+            df_precos_iniciais.to_csv(arquivo_precos)
+            st.success(f"Dados salvos com sucesso em '{arquivo_precos}'")
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao baixar os dados: {e}")
+            st.stop()
 
 # --- Definição de Ativos e Pesos ---
 empresas = [
