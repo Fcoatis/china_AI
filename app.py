@@ -103,13 +103,16 @@ valor_total = st.number_input(
 )
 
 # --- Seleção de Data de Compra ---
+hoje = date.today()
+hoje_str = hoje.strftime("%Y-%m-%d")
+
 data_compra = st.date_input(
     "📅 Data da Compra (retroativa)",
     value=date(2025, 7, 15),
-    max_value=date.today() - timedelta(days=1),
+    max_value=hoje - timedelta(days=1),
 )
 data_str = data_compra.strftime("%Y-%m-%d")
-periodo_str = formatar_periodo(data_compra, date.today())
+periodo_str = formatar_periodo(data_compra, hoje)
 
 col_dc, col_per = st.columns(2)
 with col_dc:
@@ -125,7 +128,10 @@ else:
     st.error(f"Arquivo não encontrado: {arquivo_precos}")
     st.stop()
 
-
+indice_util = pd.date_range(start=data_compra, end=hoje, freq="B")
+if indice_util.empty:
+    st.error("Não há dias úteis no período selecionado. Ajuste a data.")
+    st.stop()
 
 # --- Definição de Ativos e Pesos ---
 empresas = [
@@ -158,14 +164,108 @@ tickers = {
         ],
     )
 }
+# Mapeamento estático das moedas dos tickers
+TICKER_CURRENCY = {
+    "BIDU": "USD",
+    "BABA": "USD",
+    "0700.HK": "HKD",
+    "0020.HK": "HKD",
+    "002230.SZ": "CNY",
+    "0981.HK": "HKD",
+    "688256.SS": "CNY",
+    "002747.SZ": "CNY",
+    "300024.SZ": "CNY",
+    "688041.SS": "CNY",
+}
+
+# Paridade cambial -> símbolo do Yahoo Finance e se precisamos inverter (1/valor)
+CURRENCY_TO_PAIR = {
+    "USD": {"symbol": None, "invert": False},
+    "HKD": {"symbol": "USDHKD=X", "invert": True},
+    "CNY": {"symbol": "USDCNY=X", "invert": True},
+}
+
+
+def obter_moeda_ticker(ticker: str) -> str:
+    """Retorna a moeda do ticker, assumindo USD se não configurado."""
+    currency = TICKER_CURRENCY.get(ticker)
+    if currency:
+        return currency
+    st.warning(f"Moeda do ticker {ticker} não definida; assumindo USD.")
+    return "USD"
+
+
+def carregar_series_fx(currencies, start: str, end: str, index) -> dict:
+    """Baixa séries cambiais para converter moedas locais em USD."""
+    fx_map = {}
+    for currency in currencies:
+        if currency == "USD":
+            fx_map[currency] = pd.Series(1.0, index=index, name=currency)
+            continue
+
+        info = CURRENCY_TO_PAIR.get(currency)
+        if not info or not info.get("symbol"):
+            st.warning(
+                f"Sem par cambial configurado para {currency}; assumindo paridade 1.0."
+            )
+            fx_map[currency] = pd.Series(1.0, index=index, name=currency)
+            continue
+
+        symbol = info["symbol"]
+        invert = info.get("invert", False)
+        try:
+            hist = yf.Ticker(symbol).history(start=start, end=end)
+            if hist.empty or "Close" not in hist:
+                raise ValueError("série vazia")
+
+            serie = hist["Close"].copy()
+            serie.index = serie.index.tz_localize(None)
+            serie = serie.astype(float).replace(0.0, float("nan"))
+            if invert:
+                serie = 1 / serie
+            serie = serie.sort_index()
+            serie = serie.reindex(index).ffill()
+            if serie.isna().all():
+                raise ValueError("série sem dados úteis")
+            serie = serie.bfill()
+            fx_map[currency] = serie.rename(currency)
+        except Exception as exc:
+            st.warning(
+                f"Falha ao obter câmbio {currency}/USD ({symbol}): {exc}. Assumindo 1.0."
+            )
+            fx_map[currency] = pd.Series(1.0, index=index, name=currency)
+
+    return fx_map
 pesos = dict(zip(empresas, [15, 15, 10, 8, 7, 12, 8, 10, 7, 8]))
+
+currencies_needed = {obter_moeda_ticker(tick) for tick in tickers.values()}
+fx_series = carregar_series_fx(currencies_needed, data_str, hoje_str, indice_util)
+precos_iniciais_usd = {}
 
 # --- Alocação otimizada via resíduos ---
 dados_alloc = []
 for empresa in empresas:
     ticker = tickers[empresa]
     peso = pesos[empresa]
-    preco_ini = float(df_precos_iniciais.loc[ticker, "PrecoInicial"])
+    preco_ini_local = float(df_precos_iniciais.loc[ticker, "PrecoInicial"])
+    currency = obter_moeda_ticker(ticker)
+    fx_serie = fx_series.get(currency)
+    fx_no_dia = None
+    if fx_serie is not None:
+        fx_no_dia = fx_serie.asof(pd.Timestamp(data_compra))
+    if fx_no_dia is None or pd.isna(fx_no_dia):
+        st.warning(
+            "Sem câmbio disponível para "
+            f"{currency} em {data_str}; usando último valor disponível."
+        )
+        fx_no_dia = fx_serie.iloc[-1] if fx_serie is not None else 1.0
+
+    preco_ini = preco_ini_local * fx_no_dia
+    if pd.isna(preco_ini) or preco_ini <= 0:
+        st.error(f"Preço inicial inválido para {ticker}.")
+        st.stop()
+
+    precos_iniciais_usd[ticker] = preco_ini
     valor_desejado = valor_total * peso / 100
     qtd_exata = valor_desejado / preco_ini
     parte_int = int(qtd_exata)
@@ -176,7 +276,7 @@ for empresa in empresas:
             "Ticker": ticker,
             "Peso (%)": peso,
             "Quantidade": parte_int,
-            "Preço Inicial (USD)": round(preco_ini, 2),
+            "Preço Inicial (USD)": preco_ini,
             "Resíduo": residuo,
         }
     )
@@ -185,47 +285,87 @@ df_alloc = pd.DataFrame(dados_alloc)
 
 # Ajuste do caixa remanescente
 caixa = valor_total - (df_alloc["Quantidade"] * df_alloc["Preço Inicial (USD)"]).sum()
-df_alloc = df_alloc.sort_values("Resíduo", ascending=False).reset_index(drop=True)
-for i in range(len(df_alloc)):
-    preco_compra = df_alloc.loc[i, "Preço Inicial (USD)"]
-    if caixa >= preco_compra:
-        df_alloc.loc[i, "Quantidade"] += 1
-        caixa -= preco_compra
+min_price = df_alloc["Preço Inicial (USD)"].min()
+
+while caixa >= min_price:
+    alvo_usd = valor_total * df_alloc["Peso (%)"] / 100.0
+    invest_atual_usd = df_alloc["Quantidade"] * df_alloc["Preço Inicial (USD)"]
+    gap_usd = alvo_usd - invest_atual_usd
+
+    affordable_mask = df_alloc["Preço Inicial (USD)"] <= caixa
+    if not affordable_mask.any():
+        break
+
+    candidatos = df_alloc.loc[affordable_mask, ["Preço Inicial (USD)"]].copy()
+    candidatos["Gap USD"] = gap_usd.loc[affordable_mask]
+    candidatos = candidatos.sort_values(
+        by=["Gap USD", "Preço Inicial (USD)"], ascending=[False, True]
+    )
+
+    idx_escolhido = candidatos.index[0]
+    if candidatos.loc[idx_escolhido, "Gap USD"] <= 0:
+        break
+
+    preco_compra = df_alloc.loc[idx_escolhido, "Preço Inicial (USD)"]
+    df_alloc.loc[idx_escolhido, "Quantidade"] += 1
+    caixa -= preco_compra
+
+valor_desejado_series = valor_total * df_alloc["Peso (%)"] / 100.0
+qtd_exata_final = valor_desejado_series / df_alloc["Preço Inicial (USD)"]
+df_alloc["Resíduo"] = (qtd_exata_final - df_alloc["Quantidade"]).round(6)
 
 # --- Preço Atual via yfinance ---
-precos_atuais = {}
-today_str = date.today().strftime("%Y-%m-%d")
-for ticker in df_alloc["Ticker"]:
+historicos_usd = {}
+for ticker in tickers.values():
+    currency = obter_moeda_ticker(ticker)
     try:
-        hist = yf.Ticker(ticker).history(start=data_str, end=today_str)["Close"]
-        hist.index = hist.index.tz_localize(None)
-        precos_atuais[ticker] = hist.iloc[-1]
-    except Exception:
-        precos_atuais[ticker] = None
+        hist = yf.Ticker(ticker).history(start=data_str, end=hoje_str)
+        if hist.empty or "Close" not in hist:
+            raise ValueError("sem dados de fechamento")
+        serie = hist["Close"].copy()
+        serie.index = serie.index.tz_localize(None)
+        fx_alinhado = fx_series[currency].reindex(serie.index, method="ffill")
+        fx_alinhado = fx_alinhado.bfill()
+        serie_usd = serie * fx_alinhado
+        historicos_usd[ticker] = serie_usd
+    except Exception as exc:
+        st.warning(f"Falha ao obter histórico para {ticker}: {exc}")
+        historicos_usd[ticker] = pd.Series(dtype=float)
 
-df_alloc["Preço Atual (USD)"] = df_alloc["Ticker"].map(precos_atuais).round(2)
+prices_usd_df = pd.DataFrame(historicos_usd)
+prices_usd_df = prices_usd_df.reindex(index=indice_util)
+prices_usd_df = prices_usd_df.reindex(columns=list(tickers.values()))
+prices_usd_df = prices_usd_df.ffill()
+for ticker, preco_ini in precos_iniciais_usd.items():
+    if ticker in prices_usd_df.columns:
+        prices_usd_df[ticker] = prices_usd_df[ticker].fillna(preco_ini)
+
+precos_atuais_series = df_alloc["Ticker"].map(prices_usd_df.iloc[-1])
+precos_atuais_series = precos_atuais_series.fillna(df_alloc["Preço Inicial (USD)"])
+df_alloc["Preço Atual (USD)"] = precos_atuais_series.round(2)
 
 # --- Investimentos inicial e atual ---
 df_alloc["Investimento Inicial (USD)"] = (
     df_alloc["Quantidade"] * df_alloc["Preço Inicial (USD)"]
 ).round(2)
 df_alloc["Investimento Atual (USD)"] = (
-    df_alloc["Quantidade"] * df_alloc["Preço Atual (USD)"]
+    df_alloc["Quantidade"] * precos_atuais_series
 ).round(2)
 
 # --- Ganho/Perda e Variação ---
 df_alloc["Ganho/Perda (USD)"] = (
     df_alloc["Investimento Atual (USD)"] - df_alloc["Investimento Inicial (USD)"]
 ).round(2)
+variacao_base = df_alloc["Investimento Inicial (USD)"].replace(0, pd.NA)
 df_alloc["Variação (%)"] = (
-    (df_alloc["Ganho/Perda (USD)"] / df_alloc["Investimento Inicial (USD)"]) * 100
-).round(2)
+    (df_alloc["Ganho/Perda (USD)"] / variacao_base) * 100
+).fillna(0.0).round(2)
 
 # --- Totais e Métricas ---
 total_investido = df_alloc["Investimento Inicial (USD)"].sum()
 total_atual = df_alloc["Investimento Atual (USD)"].sum()
 ganho_total = total_atual - total_investido
-variacao_total = (ganho_total / total_investido) * 100
+variacao_total = (ganho_total / total_investido) * 100 if total_investido else 0.0
 
 st.subheader("📈 Resumo do Portfólio")
 col1, col2, col3 = st.columns(3)
@@ -299,19 +439,14 @@ st.pyplot(fig1, transparent=True)
 
 # ------------------ Gráfico 2: Linha (Plotly) ------------------ #
 # Série histórica do portfólio
-prices = {}
-for ticker in df_alloc["Ticker"]:
-    hist = yf.Ticker(ticker).history(start=data_str, end=today_str)["Close"]
-    hist.index = hist.index.tz_localize(None)
-    prices[ticker] = hist
-
-# Apenas dias úteis
-bd = pd.date_range(start=data_compra, end=date.today(), freq="B")
-prices_df = pd.DataFrame(prices).reindex(bd).ffill()
+historico_portfolio = prices_usd_df.copy()
 
 quantidades = df_alloc.set_index("Ticker")["Quantidade"]
-port_val = (prices_df * quantidades).sum(axis=1)
-port_ret = (port_val / total_investido - 1) * 100
+port_val = (historico_portfolio * quantidades).sum(axis=1)
+if total_investido:
+    port_ret = (port_val / total_investido - 1) * 100
+else:
+    port_ret = pd.Series(0.0, index=port_val.index)
 
 df_ret = port_ret.rename("Retorno (%)").reset_index().rename(columns={"index": "Data"})
 # período por ponto (da data de compra até cada data)
