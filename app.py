@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 
 # Plotly (linha interativa)
 import plotly.express as px
+import plotly.graph_objects as go
 
 # ------------------ Config da página ------------------ #
 st.set_page_config(page_title="Simulador de Portfólio: IA na China", layout="centered")
@@ -243,6 +244,7 @@ fx_series = carregar_series_fx(currencies_needed, data_str, hoje_str, indice_uti
 precos_iniciais_usd = {}
 
 # --- Alocação otimizada via resíduos ---
+# --- Alocação inicial e captura de dados auxiliares ---
 dados_alloc = []
 for empresa in empresas:
     ticker = tickers[empresa]
@@ -253,14 +255,20 @@ for empresa in empresas:
     fx_no_dia = None
     if fx_serie is not None:
         fx_no_dia = fx_serie.asof(pd.Timestamp(data_compra))
-    if fx_no_dia is None or pd.isna(fx_no_dia):
+    fx_utilizado = fx_no_dia
+    if fx_utilizado is None or pd.isna(fx_utilizado):
         st.warning(
             "Sem câmbio disponível para "
             f"{currency} em {data_str}; usando último valor disponível."
         )
-        fx_no_dia = fx_serie.iloc[-1] if fx_serie is not None else 1.0
+        if fx_serie is not None and not fx_serie.empty:
+            fx_utilizado = fx_serie.iloc[-1]
+        else:
+            fx_utilizado = 1.0
 
-    preco_ini = preco_ini_local * fx_no_dia
+    fx_utilizado = float(fx_utilizado if fx_utilizado is not None else 1.0)
+
+    preco_ini = preco_ini_local * fx_utilizado
     if pd.isna(preco_ini) or preco_ini <= 0:
         st.error(f"Preço inicial inválido para {ticker}.")
         st.stop()
@@ -274,8 +282,12 @@ for empresa in empresas:
         {
             "Empresa": empresa,
             "Ticker": ticker,
+            "Moeda": currency,
             "Peso (%)": peso,
             "Quantidade": parte_int,
+            "Qtd inteira (inicial)": parte_int,
+            "Preço Local (na compra)": preco_ini_local,
+            "FX local→USD (compra)": fx_utilizado,
             "Preço Inicial (USD)": preco_ini,
             "Resíduo": residuo,
         }
@@ -283,16 +295,48 @@ for empresa in empresas:
 
 df_alloc = pd.DataFrame(dados_alloc)
 
+valor_desejado_series = valor_total * df_alloc["Peso (%)"] / 100.0
+df_alloc["Alvo USD"] = valor_desejado_series
+qtd_exata_inicial = valor_desejado_series / df_alloc["Preço Inicial (USD)"]
+df_alloc["Qtd exata"] = qtd_exata_inicial
+df_alloc["Qtd inteira (inicial)"] = df_alloc["Qtd inteira (inicial)"].astype(int)
+df_alloc["Resíduo (inicial)"] = (
+    qtd_exata_inicial - df_alloc["Qtd inteira (inicial)"]
+).round(6)
+
+df_compra_inicial = df_alloc[
+    [
+        "Empresa",
+        "Ticker",
+        "Moeda",
+        "Preço Local (na compra)",
+        "FX local→USD (compra)",
+        "Preço Inicial (USD)",
+        "Peso (%)",
+        "Alvo USD",
+        "Qtd exata",
+        "Qtd inteira (inicial)",
+        "Resíduo (inicial)",
+    ]
+].copy()
+if not df_compra_inicial.empty:
+    df_compra_inicial["FX local→USD (compra)"] = (
+        df_compra_inicial["FX local→USD (compra)"].astype(float)
+    )
+
 # Ajuste do caixa remanescente
 caixa = valor_total - (df_alloc["Quantidade"] * df_alloc["Preço Inicial (USD)"]).sum()
+caixa_inicial = caixa
 min_price = df_alloc["Preço Inicial (USD)"].min()
+eventos = []
+EPS = 1e-6
 
-while caixa >= min_price:
+while caixa + EPS >= min_price:
     alvo_usd = valor_total * df_alloc["Peso (%)"] / 100.0
     invest_atual_usd = df_alloc["Quantidade"] * df_alloc["Preço Inicial (USD)"]
     gap_usd = alvo_usd - invest_atual_usd
 
-    affordable_mask = df_alloc["Preço Inicial (USD)"] <= caixa
+    affordable_mask = df_alloc["Preço Inicial (USD)"] <= (caixa + EPS)
     if not affordable_mask.any():
         break
 
@@ -306,13 +350,35 @@ while caixa >= min_price:
     if candidatos.loc[idx_escolhido, "Gap USD"] <= 0:
         break
 
+    caixa_antes = caixa
+    gap_antes = gap_usd.loc[idx_escolhido]
     preco_compra = df_alloc.loc[idx_escolhido, "Preço Inicial (USD)"]
     df_alloc.loc[idx_escolhido, "Quantidade"] += 1
     caixa -= preco_compra
 
+    invest_atual_usd = df_alloc["Quantidade"] * df_alloc["Preço Inicial (USD)"]
+    gap_depois = (
+        valor_total * df_alloc.loc[idx_escolhido, "Peso (%)"] / 100.0
+    ) - invest_atual_usd.loc[idx_escolhido]
+
+    eventos.append(
+        {
+            "Empresa": df_alloc.loc[idx_escolhido, "Empresa"],
+            "Ticker": df_alloc.loc[idx_escolhido, "Ticker"],
+            "Preço Inicial (USD)": float(preco_compra),
+            "Gap antes (USD)": float(gap_antes),
+            "Gap depois (USD)": float(gap_depois),
+            "Caixa antes (USD)": float(caixa_antes),
+            "Caixa depois (USD)": float(caixa),
+            "Compra": "+1 unidade",
+        }
+    )
+
+caixa_final = caixa
 valor_desejado_series = valor_total * df_alloc["Peso (%)"] / 100.0
 qtd_exata_final = valor_desejado_series / df_alloc["Preço Inicial (USD)"]
 df_alloc["Resíduo"] = (qtd_exata_final - df_alloc["Quantidade"]).round(6)
+df_log = pd.DataFrame(eventos)
 
 # --- Preço Atual via yfinance ---
 historicos_usd = {}
@@ -372,6 +438,93 @@ col1, col2, col3 = st.columns(3)
 col1.metric("Total Investido (USD)", f"${total_investido:,.2f}")
 col2.metric("Valor Atual (USD)", f"${total_atual:,.2f}")
 col3.metric("Ganho/Perda Total", f"${ganho_total:,.2f}", f"{variacao_total:.2f}%")
+
+st.divider()
+mostrar_detalhes = st.toggle("🔎 Mostrar detalhes da alocação")
+
+if mostrar_detalhes:
+    aba1, aba2, aba3 = st.tabs(
+        ["🛒 Compra Inicial", "📜 Log de distribuição", "📊 Gráficos"]
+    )
+
+    with aba1:
+        st.markdown("**Compra Inicial (antes do loop de distribuição do caixa):**")
+        fmt1 = {
+            "Preço Local (na compra)": "{:,.4f}",
+            "FX local→USD (compra)": "{:,.6f}",
+            "Preço Inicial (USD)": "{:,.4f}",
+            "Alvo USD": "{:,.2f}",
+            "Qtd exata": "{:,.6f}",
+            "Qtd inteira (inicial)": "{:,.0f}",
+            "Resíduo (inicial)": "{:,.6f}",
+        }
+        st.dataframe(
+            df_compra_inicial.set_index("Empresa").style.format(fmt1)
+        )
+        st.caption(f"💵 Caixa inicial após arredondamento: **${caixa_inicial:,.2f}**")
+
+    with aba2:
+        st.markdown("**Log da distribuição do caixa (passo-a-passo):**")
+        if df_log.empty:
+            st.info(
+                "Nenhuma compra extra foi necessária; caixa insuficiente ou gaps já atendidos."
+            )
+        else:
+            fmt2 = {
+                "Preço Inicial (USD)": "{:,.4f}",
+                "Gap antes (USD)": "{:,.2f}",
+                "Gap depois (USD)": "{:,.2f}",
+                "Caixa antes (USD)": "{:,.2f}",
+                "Caixa depois (USD)": "{:,.2f}",
+            }
+            st.dataframe(df_log.style.format(fmt2))
+            st.download_button(
+                "Baixar log (.csv)",
+                data=df_log.to_csv(index=False).encode("utf-8"),
+                file_name="log_distribuicao_caixa.csv",
+                mime="text/csv",
+            )
+
+    with aba3:
+        base = df_alloc.copy()
+        base["Invest Inicial USD"] = base["Investimento Inicial (USD)"]
+        fig_alvo = px.bar(
+            base,
+            x="Empresa",
+            y=["Alvo USD", "Invest Inicial USD"],
+            barmode="group",
+            title="Alvo USD vs Investimento Inicial USD",
+        )
+        fig_alvo.update_layout(xaxis_title="", yaxis_title="USD")
+        st.plotly_chart(fig_alvo, use_container_width=True)
+
+        if not df_log.empty:
+            labels = ["Caixa inicial"] + [
+                f"{row['Ticker']} (+1)" for _, row in df_log.iterrows()
+            ] + ["Caixa final"]
+            measures = [
+                "absolute",
+                *["relative"] * len(df_log),
+                "total",
+            ]
+            compras = df_log["Preço Inicial (USD)"].astype(float).tolist()
+            values = [float(caixa_inicial)] + [-valor for valor in compras] + [
+                float(caixa_final)
+            ]
+
+            fig_wf = go.Figure(
+                go.Waterfall(
+                    measure=measures,
+                    x=labels,
+                    y=values,
+                    connector={"line": {"color": "rgba(128,128,128,0.4)"}},
+                )
+            )
+            fig_wf.update_layout(
+                title="Waterfall do Caixa (distribuição por compras)",
+                yaxis_title="USD",
+            )
+            st.plotly_chart(fig_wf, use_container_width=True)
 
 # --- Tabela de Alocação (Empresa como índice) ---
 df_display = df_alloc.set_index("Empresa")[
