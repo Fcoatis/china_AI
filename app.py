@@ -46,16 +46,14 @@ def formatar_periodo(dt_inicial: date, dt_final: date) -> str:
         return " e ".join(partes)
     return f"{partes[0]}, {partes[1]} e {partes[2]}"
 
-
+# --- Funções de Tema para Gráfico Matplotlib ---
 def _hex_to_rgb(hexstr: str):
     h = hexstr.lstrip("#")
-    if len(h) != 6:
-        return None
+    if len(h) != 6: return None
     try:
-        return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
     except Exception:
         return None
-
 
 def _luma(rgb):
     r, g, b = rgb
@@ -83,6 +81,62 @@ def _theme_is_dark(force: bool | None = None) -> bool:
             return _luma(rgb) > 200
 
     return False
+
+# ------------------ Funções de Busca de Dados (com Cache) ------------------ #
+
+@st.cache_data
+def get_initial_prices(data_compra, tickers_list):
+    """Busca ou carrega os preços iniciais, salvando em CSV se não existir."""
+    data_str = data_compra.strftime("%Y-%m-%d")
+    arquivo_precos = f"precos_iniciais_{data_str}.csv"
+
+    if Path(arquivo_precos).exists():
+        return pd.read_csv(arquivo_precos, index_col=0)
+
+    with st.spinner(f"Baixando dados de preços para {data_str}..."):
+        try:
+            end_date_fetch = data_compra + timedelta(days=7)
+            dados = yf.download(
+                tickers_list, start=data_compra, end=end_date_fetch,
+                progress=False, auto_adjust=False
+            )['Close']
+
+            if dados.empty:
+                st.error(f"Não foi possível obter dados de preços para {data_str}. Tente outra data.")
+                st.stop()
+
+            precos_iniciais = dados.bfill().iloc[0]
+            df_precos = precos_iniciais.to_frame(name="PrecoInicial")
+            df_precos.to_csv(arquivo_precos)
+            st.success(f"Dados salvos com sucesso em '{arquivo_precos}'")
+            return df_precos
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao baixar os dados: {e}")
+            st.stop()
+
+@st.cache_data
+def get_current_prices(tickers_list):
+    """Busca os preços atuais para uma lista de tickers de forma otimizada."""
+    try:
+        start_fetch = date.today() - timedelta(days=5)
+        end_fetch = date.today() + timedelta(days=1)
+        dados = yf.download(
+            tickers_list, start=start_fetch, end=end_fetch,
+            progress=False, auto_adjust=False
+        )['Close']
+        return dados.ffill().iloc[-1]
+    except Exception:
+        return pd.Series(dtype=float)
+
+@st.cache_data
+def get_historical_prices(tickers_list, start_date):
+    """Busca o histórico de preços para o gráfico de evolução."""
+    prices_df = yf.download(
+        tickers_list, start=start_date, end=date.today() + timedelta(days=1),
+        progress=False, auto_adjust=False
+    )['Close']
+    prices_df.index = prices_df.index.tz_localize(None)
+    return prices_df.ffill().bfill()
 
 
 def _display_messages(messages: Sequence[ServiceMessage], *, stop_on_error: bool = False) -> None:
